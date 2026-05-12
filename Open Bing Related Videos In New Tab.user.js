@@ -13,7 +13,7 @@
 * Incase the script stops working due to bing layout changes, you'll need to do this:
 * Right click on a related video.
 * Click Inspect.
-* Find the bottom-most element that highlights the entire clickable area of the related video.
+* Find the most nested element that highlights the entire clickable area of the related video.
 * Copy it's Inner HTML, Outer HTML, CSS Selector, CSS Path, & XPath.
 * Give it all to a coding LLM, tell it that the bing layout changed, and to fix the script.
 * ezpz (may or may not be more complicated then that depending on layout and url changes).
