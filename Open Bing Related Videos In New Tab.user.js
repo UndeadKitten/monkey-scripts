@@ -2,7 +2,7 @@
 // @name         Open Bing Related Videos In New Tab
 // @namespace    https://github.com/UndeadKitten/monkey-scripts
 // @version      1.0
-// @description  Restores old Bing functionality when clicking on related videos. Middle-click or Ctrl+click to open them in a new tab. Left-click works normally. Right-click shows proper link context menu.
+// @description  Restores old Bing functionality when clicking on related videos. Middle-click or Ctrl+click to open them in a new tab. Left-click works normally. Right-click shows proper link context menu. (Vibe coded)
 // @author       UndeadKitten (aka AlwaysNothing)
 // @match        https://www.bing.com/*
 // @grant        none
