@@ -3,7 +3,7 @@ Restores old Bing functionality when clicking on related videos. Middle-click or
 
 Also makes the currently embedded video's hyperlinks (title, host website, and uploader) match the functionality of clicking on a related video's host website.
 
-Has a config so you can change the the functionality of mouse clicks. You can also force the &mmscn=vidadt layout on or off, as well as automatically change the search query to the title of the related video you clicked on.
+Has a config so you can change the the functionality of mouse clicks. You can also force the &mmscn=vidadt layout on or off, as well as automatically change the search query to the title of the related video you clicked on. Also has a setting to refresh the page when left clicking a related video.
 
 Thumbnail previews are disabled for now, and will be restored in a future update.
 
