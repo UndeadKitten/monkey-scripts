@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Open Bing Related Videos In New Tab
 // @namespace    https://github.com/UndeadKitten/monkey-scripts
-// @version      1.1
-// @description  Restores old Bing functionality when clicking on related videos. Settings config available.
+// @version      1.2
+// @description  Restores old Bing functionality when clicking on related videos, and a bit of extra stuff. Settings config available.
 // @author       UndeadKitten (aka AlwaysNothing)
 // @match        https://www.bing.com/*
 // @grant        GM_setValue
@@ -27,7 +27,8 @@
         host_middle: 5,
         host_ctrl: 5,
         update_query: 0,
-        force_vidadt: 1
+        force_vidadt: 1,
+        force_refresh: 0
     };
 
     let settings = GM_getValue('bvf_settings', defaultSettings);
@@ -90,6 +91,14 @@
                 </div>
             </div>
 
+            <div style="display:flex; flex-direction:column; gap:5px;">
+                <label style="font-weight:bold; font-size:13px;">Left click refreshes page (current tab):</label>
+                <select id="sel_force_refresh" style="padding:6px; border:1px solid #ccc; border-radius:4px; font-size:13px;">
+                    <option value="0" ${settings.force_refresh === 0 ? 'selected' : ''}>No, use Bing's native loader</option>
+                    <option value="1" ${settings.force_refresh === 1 ? 'selected' : ''}>Yes, force a full page refresh</option>
+                </select>
+            </div>
+
             <div style="display:flex; justify-content:space-between; align-items:center;">
                 <button id="bvf-reset" style="padding:8px 16px; cursor:pointer; background:#fff; border:1px solid #d32f2f; border-radius:4px; color:#d32f2f;">Reset Defaults</button>
                 <div style="display:flex; gap:10px;">
@@ -112,6 +121,7 @@
             document.getElementById('sel_host_ctrl').value = defaultSettings.host_ctrl;
             document.getElementById('sel_update_query').value = defaultSettings.update_query;
             document.getElementById('sel_force_vidadt').value = defaultSettings.force_vidadt;
+            document.getElementById('sel_force_refresh').value = defaultSettings.force_refresh;
         });
 
         // Cancel Button Logic
@@ -127,7 +137,8 @@
                 host_middle: parseInt(document.getElementById('sel_host_middle').value, 10),
                 host_ctrl: parseInt(document.getElementById('sel_host_ctrl').value, 10),
                 update_query: parseInt(document.getElementById('sel_update_query').value, 10),
-                force_vidadt: parseInt(document.getElementById('sel_force_vidadt').value, 10)
+                force_vidadt: parseInt(document.getElementById('sel_force_vidadt').value, 10),
+                force_refresh: parseInt(document.getElementById('sel_force_refresh').value, 10),
             };
             GM_setValue('bvf_settings', newSettings);
             settings = newSettings;
@@ -218,7 +229,7 @@
 
             const actionCode = settings[`${source}_${clickType}`];
 
-            const isPassThrough = (source === 'video' && clickType === 'left' && actionCode === 1 && settings.update_query === 1);
+            const isPassThrough = (source === 'video' && clickType === 'left' && actionCode === 1 && settings.force_refresh === 0);;
 
             if (isPassThrough) {
                 element.style.pointerEvents = 'none';
@@ -238,7 +249,7 @@
             if (!clickType) return;
 
             const actionCode = settings[`${source}_${clickType}`];
-            const isPassThrough = (source === 'video' && clickType === 'left' && actionCode === 1 && settings.update_query === 1);
+            const isPassThrough = (source === 'video' && clickType === 'left' && actionCode === 1 && settings.force_refresh === 0);;
 
             if (isPassThrough) {
                 return; // Bing native loader handles this
