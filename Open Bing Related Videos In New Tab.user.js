@@ -2,7 +2,7 @@
 // @name         Open Bing Related Videos In New Tab
 // @namespace    https://github.com/UndeadKitten/monkey-scripts
 // @version      1.1
-// @description  Restores old Bing functionality when clicking on related videos. Menu config available.
+// @description  Restores old Bing functionality when clicking on related videos. Settings config available.
 // @author       UndeadKitten (aka AlwaysNothing)
 // @match        https://www.bing.com/*
 // @grant        GM_setValue
