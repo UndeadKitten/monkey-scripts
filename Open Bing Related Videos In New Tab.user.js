@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Open Bing Related Videos In New Tab
+// @name         Open Bing Related Videos In New Tab 2
 // @namespace    https://github.com/UndeadKitten/monkey-scripts
-// @version      1.2
-// @description  Restores old Bing functionality when clicking on related videos, and a bit of extra stuff. Settings config available.
+// @version      1.3.42
+// @description  Restores and completely customizes Bing functionality when clicking on related videos. Menu config available.
 // @author       UndeadKitten (aka AlwaysNothing)
 // @match        https://www.bing.com/*
 // @grant        GM_setValue
@@ -15,325 +15,456 @@
 (function () {
     'use strict';
 
-    // Check once whether the current page uses the &mmscn=vidadt layout.
-    const isVidadt = new URLSearchParams(window.location.search).get('mmscn') === 'vidadt';
+    // --- Configuration Object ---
+    // Centralized configuration for all selectors, attributes, and magic values.
+    // Update this object if Bing's HTML/CSS structure changes.
+    const BING_CONFIG = {
+        selectors: {
+            videoTile: '.videoTile',
+            hostLink: '.source[href], .publishUser[href]',
+            ghostClass: 'bvf-ghost',
+            controlsToAvoid: '.vol, .vrhol, .vhcic',
+            metadataLinks: [
+                '.metaItem a',
+                '.source[href]',
+                '.publishUser[href]',
+                'a.metaItem.vctil',
+                'a[data-c="sourceItem"]'
+            ],
+            titleElement: '.title'
+        },
+        attributes: {
+            cardMetadata: 'mmeta',
+            processedCard: 'data-bvf-v4',
+            videoIdField: 'mid'
+        },
+        urls: {
+            baseVideoSearch: 'https://www.bing.com/videos/search',
+            baseRiverview: 'https://www.bing.com/videos/riverview/relatedvideo'
+        },
+        params: {
+            queryKey: 'q',
+            viewKey: 'view',
+            videoIdKey: 'mid',
+            modeKey: 'mmscn',
+            viewValue: 'detail',
+            modeValue: 'vidadt'
+        },
+        timing: {
+            patchInterval: 1500,
+            ghostElementTimeout: 250
+        }
+    };
+
+    const isVidadt = new URLSearchParams(window.location.search).get(BING_CONFIG.params.modeKey) === BING_CONFIG.params.modeValue;
+
+    // --- Error Codes ---
+    const BVF_ERRORS = {
+        E002: "Failed to parse card metadata or missing mid field",
+        E003: "Host link not found in card - selector may have changed",
+        E004: "Title element not found in card - selector may have changed",
+        E005: "Metadata link selectors failed to match"
+    };
+
+    function reportError(code, context = '') {
+        const message = BVF_ERRORS[code] || "Unknown error";
+        const fullMessage = context ? `${message} (${context})` : message;
+        console.error(`[BVF ${code}] ${fullMessage}`);
+    }
 
     // --- Settings Management ---
     const defaultSettings = {
-        video_left: 1,
-        video_middle: 2,
-        video_ctrl: 2,
-        host_left: 4,
-        host_middle: 5,
-        host_ctrl: 5,
-        update_query: 0,
-        force_vidadt: 1,
-        force_refresh: 0
+        video_left: 1, video_middle: 2, video_ctrl: 2,
+        host_left: 4, host_middle: 5, host_ctrl: 5,
+        update_query: 0, force_vidadt: 1, refresh_on_left_click: 0
     };
-
     let settings = GM_getValue('bvf_settings', defaultSettings);
 
+    // --- Check and fix vidadt on page load ---
+    (function () {
+        const hasVidadt = isVidadt;
+        let shouldReload = false;
+
+        if (settings.force_vidadt === 0 && hasVidadt) {
+            // Force Off: remove vidadt
+            shouldReload = true;
+        } else if (settings.force_vidadt === 1 && !hasVidadt) {
+            // Force On: add vidadt
+            shouldReload = true;
+        }
+
+        if (shouldReload) {
+            const url = new URL(window.location);
+            if (settings.force_vidadt === 0) {
+                url.searchParams.delete('mmscn');
+            } else if (settings.force_vidadt === 1) {
+                url.searchParams.set('mmscn', 'vidadt');
+            }
+            window.location.href = url.toString();
+        }
+    })();
     const actionLabels = {
-        1: "Open onto bing embed in current tab",
-        2: "Open onto bing embed in new tab",
-        3: "Open onto bing embed in new tab and open the new tab",
-        4: "Open onto host website in current tab",
-        5: "Open onto host website in new tab",
-        6: "Open onto host website in new tab and open the new tab"
+        1: "Open onto bing embed in current tab", 2: "Open onto bing embed in new tab",
+        3: "Open onto bing embed in new tab and open the new tab", 4: "Open onto host website in current tab",
+        5: "Open onto host website in new tab", 6: "Open onto host website in new tab and open the new tab"
+    };
+    const vidadtLabels = {
+        0: "Force Riverview layout (not fully supported)",
+        1: "Force Vidadt layout (old layout, fully supported)",
+        2: "Don't Force"
     };
 
     // --- Settings UI ---
     function openSettingsUI() {
         if (document.getElementById('bvf-settings-modal')) return;
-
         const modal = document.createElement('div');
         modal.id = 'bvf-settings-modal';
-        modal.style.cssText = `
-            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            background: rgba(0,0,0,0.6); z-index: 999999; display: flex;
-            align-items: center; justify-content: center; font-family: sans-serif;
-        `;
-
+        modal.style.cssText = `position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background: rgba(0,0,0,0.6); z-index: 999999; display: flex; align-items: center; justify-content: center; font-family: sans-serif;`;
         const container = document.createElement('div');
-        container.style.cssText = `
-            background: #fff; color: #333; padding: 25px; border-radius: 8px;
-            width: 500px; max-width: 90%; max-height: 90vh; overflow-y: auto;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-        `;
-
+        container.style.cssText = `background: #fff; color: #333; padding: 25px; border-radius: 8px; width: 500px; max-width: 90%; max-height: 90vh; overflow-y: auto; box-shadow: 0 10px 30px rgba(0,0,0,0.3);`;
         container.innerHTML = `
             <h2 style="margin-top:0; border-bottom:1px solid #ccc; padding-bottom:10px;">⚙️ Bing Video Clicks</h2>
             <div style="display:flex; flex-direction:column; gap:15px; margin-bottom: 20px;">
-                ${createSelectHTML('Video: Left Click', 'video_left')}
-                ${createSelectHTML('Video: Middle Click', 'video_middle')}
-                ${createSelectHTML('Video: Ctrl+Left Click', 'video_ctrl')}
+                ${createSelectHTML('Video: Left Click', 'video_left', actionLabels)}
+                ${createSelectHTML('Video: Middle Click', 'video_middle', actionLabels)}
+                ${createSelectHTML('Video: Ctrl+Left Click', 'video_ctrl', actionLabels)}
                 <hr style="width:100%; border:0; border-top:1px solid #eee; margin:0;" />
-                ${createSelectHTML('Host Website: Left Click', 'host_left')}
-                ${createSelectHTML('Host Website: Middle Click', 'host_middle')}
-                ${createSelectHTML('Host Website: Ctrl+Left Click', 'host_ctrl')}
+                ${createSelectHTML('Host Website: Left Click', 'host_left', actionLabels)}
+                ${createSelectHTML('Host Website: Middle Click', 'host_middle', actionLabels)}
+                ${createSelectHTML('Host Website: Ctrl+Left Click', 'host_ctrl', actionLabels)}
                 <hr style="width:100%; border:0; border-top:1px solid #eee; margin:0;" />
-
-                <div style="display:flex; flex-direction:column; gap:5px;">
-                    <label style="font-weight:bold; font-size:13px;">Change search query to related video's title:</label>
-                    <select id="sel_update_query" style="padding:6px; border:1px solid #ccc; border-radius:4px; font-size:13px;">
-                        <option value="1" ${settings.update_query === 1 ? 'selected' : ''}>Yes</option>
-                        <option value="0" ${settings.update_query === 0 ? 'selected' : ''}>No</option>
-                    </select>
-                </div>
-
-                <div style="display:flex; flex-direction:column; gap:5px;">
-                    <label style="font-weight:bold; font-size:13px;">Change video layout (&mmscn=vidadt):</label>
-                    <select id="sel_force_vidadt" style="padding:6px; border:1px solid #ccc; border-radius:4px; font-size:13px;">
-                        <option value="1" ${settings.force_vidadt === 1 ? 'selected' : ''}>Yes, force &mmscn=vidadt on video pages</option>
-                        <option value="2" ${settings.force_vidadt === 2 ? 'selected' : ''}>Yes, remove &mmscn=vidadt on video pages</option>
-                        <option value="3" ${settings.force_vidadt === 3 ? 'selected' : ''}>No, retain &mmscn=vidadt if present</option>
-                    </select>
-                </div>
+                ${createSelectHTML('Layout Mode', 'force_vidadt', vidadtLabels)}
+                ${createCheckboxHTML('Update query to video title', 'update_query')}
+                ${createCheckboxHTML('Refresh page on video left-click', 'refresh_on_left_click')}
             </div>
-
-            <div style="display:flex; flex-direction:column; gap:5px;">
-                <label style="font-weight:bold; font-size:13px;">Left click refreshes page (current tab):</label>
-                <select id="sel_force_refresh" style="padding:6px; border:1px solid #ccc; border-radius:4px; font-size:13px;">
-                    <option value="0" ${settings.force_refresh === 0 ? 'selected' : ''}>No, use Bing's native loader</option>
-                    <option value="1" ${settings.force_refresh === 1 ? 'selected' : ''}>Yes, force a full page refresh</option>
-                </select>
-            </div>
-
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <button id="bvf-reset" style="padding:8px 16px; cursor:pointer; background:#fff; border:1px solid #d32f2f; border-radius:4px; color:#d32f2f;">Reset Defaults</button>
+            <div style="display:flex; justify-content:space-between; gap:10px;">
+                <button id="bvf-reset" style="padding:8px 16px; cursor:pointer; background:#f0f0f0; border:1px solid #ccc; border-radius:4px;">Reset to Default</button>
                 <div style="display:flex; gap:10px;">
-                    <button id="bvf-cancel" style="padding:8px 16px; cursor:pointer; background:#f0f0f0; border:1px solid #ccc; border-radius:4px; color:#333;">Cancel</button>
+                    <button id="bvf-cancel" style="padding:8px 16px; cursor:pointer; background:#f0f0f0; border:1px solid #ccc; border-radius:4px;">Cancel</button>
                     <button id="bvf-save" style="padding:8px 16px; cursor:pointer; background:#0078D4; border:none; border-radius:4px; color:#fff;">Save & Reload</button>
                 </div>
-            </div>
-        `;
-
+            </div>`;
         modal.appendChild(container);
         document.body.appendChild(modal);
 
-        // Reset Button Logic
         document.getElementById('bvf-reset').addEventListener('click', () => {
-            document.getElementById('sel_video_left').value = defaultSettings.video_left;
-            document.getElementById('sel_video_middle').value = defaultSettings.video_middle;
-            document.getElementById('sel_video_ctrl').value = defaultSettings.video_ctrl;
-            document.getElementById('sel_host_left').value = defaultSettings.host_left;
-            document.getElementById('sel_host_middle').value = defaultSettings.host_middle;
-            document.getElementById('sel_host_ctrl').value = defaultSettings.host_ctrl;
-            document.getElementById('sel_update_query').value = defaultSettings.update_query;
-            document.getElementById('sel_force_vidadt').value = defaultSettings.force_vidadt;
-            document.getElementById('sel_force_refresh').value = defaultSettings.force_refresh;
+            // Reset all form fields to default values (don't save yet)
+            ['video_left', 'video_middle', 'video_ctrl', 'host_left', 'host_middle', 'host_ctrl', 'force_vidadt'].forEach(k => {
+                document.getElementById(`sel_${k}`).value = defaultSettings[k];
+            });
+            ['update_query', 'refresh_on_left_click'].forEach(k => {
+                document.getElementById(`chk_${k}`).checked = defaultSettings[k] === 1;
+            });
         });
 
-        // Cancel Button Logic
         document.getElementById('bvf-cancel').addEventListener('click', () => modal.remove());
-
-        // Save Button Logic
         document.getElementById('bvf-save').addEventListener('click', () => {
-            const newSettings = {
-                video_left: parseInt(document.getElementById('sel_video_left').value, 10),
-                video_middle: parseInt(document.getElementById('sel_video_middle').value, 10),
-                video_ctrl: parseInt(document.getElementById('sel_video_ctrl').value, 10),
-                host_left: parseInt(document.getElementById('sel_host_left').value, 10),
-                host_middle: parseInt(document.getElementById('sel_host_middle').value, 10),
-                host_ctrl: parseInt(document.getElementById('sel_host_ctrl').value, 10),
-                update_query: parseInt(document.getElementById('sel_update_query').value, 10),
-                force_vidadt: parseInt(document.getElementById('sel_force_vidadt').value, 10),
-                force_refresh: parseInt(document.getElementById('sel_force_refresh').value, 10),
-            };
-            GM_setValue('bvf_settings', newSettings);
-            settings = newSettings;
+            const s = {};
+            ['video_left', 'video_middle', 'video_ctrl', 'host_left', 'host_middle', 'host_ctrl', 'force_vidadt'].forEach(k => s[k] = parseInt(document.getElementById(`sel_${k}`).value, 10));
+            ['update_query', 'refresh_on_left_click'].forEach(k => s[k] = document.getElementById(`chk_${k}`).checked ? 1 : 0);
+            GM_setValue('bvf_settings', s);
             window.location.reload();
         });
     }
 
-    function createSelectHTML(label, key) {
-        let optionsHtml = '';
-        for (let i = 1; i <= 6; i++) {
-            const selected = settings[key] === i ? 'selected' : '';
-            optionsHtml += `<option value="${i}" ${selected}>${actionLabels[i]}</option>`;
+    function createSelectHTML(label, key, labels) {
+        let opt = '';
+        for (const val in labels) {
+            opt += `<option value="${val}" ${settings[key] == val ? 'selected' : ''}>${labels[val]}</option>`;
         }
-        return `
-            <div style="display:flex; flex-direction:column; gap:5px;">
-                <label style="font-weight:bold; font-size:13px;">${label}</label>
-                <select id="sel_${key}" style="padding:6px; border:1px solid #ccc; border-radius:4px; font-size:13px;">
-                    ${optionsHtml}
-                </select>
-            </div>
-        `;
+        return `<div style="display:flex; flex-direction:column; gap:5px;"><label style="font-weight:bold; font-size:13px;">${label}</label><select id="sel_${key}" style="padding:6px; border:1px solid #ccc; border-radius:4px;">${opt}</select></div>`;
     }
 
+    function createCheckboxHTML(label, key) {
+        return `<div style="display:flex; align-items:center; gap:8px;"><input type="checkbox" id="chk_${key}" ${settings[key] === 1 ? 'checked' : ''} style="cursor:pointer; width:16px; height:16px;"><label style="font-weight:bold; font-size:13px; cursor:pointer; margin:0;" for="chk_${key}">${label}</label></div>`;
+    }
     GM_registerMenuCommand("⚙️ Configure Click Behaviors", openSettingsUI);
 
-    // --- Core Logic ---
+    // --- Logic ---
+
+    /**
+     * urlHasVidadt: Checks if a URL contains the vidadt parameter
+     */
+    function urlHasVidadt(url) {
+        const searchParams = new URLSearchParams(url.split('?')[1] || '');
+        return searchParams.get(BING_CONFIG.params.modeKey) === BING_CONFIG.params.modeValue;
+    }
 
     function buildBingVideoUrl(videoId, title) {
-        const currentQ = new URLSearchParams(window.location.search).get('q');
-        const qParam = (settings.update_query === 0 && currentQ) ? currentQ : title;
-
-        const params = new URLSearchParams({ q: qParam, view: 'detail', mid: videoId });
-
-        // V2.4 Layout Logic: Handle the &mmscn=vidadt parameter based on settings
-        if (settings.force_vidadt === 1) {
-            params.set('mmscn', 'vidadt'); // Force add
-        } else if (settings.force_vidadt === 3 && isVidadt) {
-            params.set('mmscn', 'vidadt'); // Retain current page's state
+        // Determine query: use title if update_query is enabled, otherwise use current search query or title
+        let q;
+        if (settings.update_query === 1) {
+            q = title;
+        } else {
+            q = new URLSearchParams(window.location.search).get(BING_CONFIG.params.queryKey) || title;
         }
-        // If force_vidadt === 2, we just don't set it at all.
 
-        return 'https://www.bing.com/videos/search?' + params.toString();
+        let useVidadt = false;
+        if (settings.force_vidadt === 1) {
+            useVidadt = true;
+        } else if (settings.force_vidadt === 2 && isVidadt) {
+            useVidadt = true;
+        }
+
+        if (useVidadt) {
+            // Old layout (vidadt)
+            const params = new URLSearchParams({
+                [BING_CONFIG.params.queryKey]: q,
+                [BING_CONFIG.params.viewKey]: BING_CONFIG.params.viewValue,
+                [BING_CONFIG.params.videoIdKey]: videoId,
+                [BING_CONFIG.params.modeKey]: BING_CONFIG.params.modeValue
+            });
+            return BING_CONFIG.urls.baseVideoSearch + '?' + params.toString();
+        } else {
+            // New layout (riverview)
+            // Note: Bing requires double && after the query string for riverview mode
+            const qParam = new URLSearchParams({ [BING_CONFIG.params.queryKey]: q }).toString();
+            const restParams = new URLSearchParams({ [BING_CONFIG.params.videoIdKey]: videoId }).toString();
+            return BING_CONFIG.urls.baseRiverview + '?' + qParam + '&&' + restParams;
+        }
     }
 
     function getCardData(card) {
-        const mmetaRaw = card.getAttribute('mmeta');
-        if (mmetaRaw) {
-            try {
-                const mmeta = JSON.parse(mmetaRaw);
-                if (mmeta.mid) return { videoId: mmeta.mid, title: card.querySelector('.title')?.getAttribute('title') ?? card.querySelector('.title')?.textContent?.trim() ?? '' };
-            } catch (_) {}
+        let m = card.getAttribute(BING_CONFIG.attributes.cardMetadata);
+        if (!m && card.parentElement) {
+            const vrhdata = card.parentElement.querySelector('.vrhdata');
+            if (vrhdata) {
+                m = vrhdata.getAttribute('vrhm');
+            }
         }
-        const playinfo = card.querySelector('.playinfo[data-inst-info]');
-        if (playinfo) {
+
+        if (m) {
             try {
-                const info = JSON.parse(playinfo.getAttribute('data-inst-info'));
-                if (info.videoId) return { videoId: info.videoId, title: card.querySelector('.title')?.getAttribute('title') ?? card.querySelector('.title')?.textContent?.trim() ?? '' };
-            } catch (_) {}
+                const j = JSON.parse(m);
+                if (j[BING_CONFIG.attributes.videoIdField]) {
+                    let title = j.vt || card.querySelector(BING_CONFIG.selectors.titleElement)?.title || card.querySelector(BING_CONFIG.selectors.titleElement)?.innerText || '';
+                    if (!title) {
+                        reportError('E004');
+                    }
+                    return {
+                        mid: j[BING_CONFIG.attributes.videoIdField],
+                        t: title
+                    };
+                }
+            } catch (e) {
+                reportError('E002', e.message);
+            }
+        } else {
+            const playinfo = card.parentElement?.querySelector('.playinfo') || card.querySelector('.playinfo');
+            if (playinfo) {
+                const mid = playinfo.getAttribute('data-videoid-info');
+                if (mid) {
+                    let title = card.querySelector(BING_CONFIG.selectors.titleElement)?.title || card.querySelector(BING_CONFIG.selectors.titleElement)?.innerText || '';
+                    return {
+                        mid: mid,
+                        t: title
+                    };
+                }
+            }
+            reportError('E002', 'metadata attribute not found');
         }
         return null;
     }
 
-    function executeAction(actionCode, bingUrl, hostUrl) {
-        const targetUrl = (actionCode <= 3) ? bingUrl : hostUrl;
+    /**
+     * execute: Performs the actual navigation/tab opening.
+     * To ensure the tab order matches the browser's native right-click/middle-click behavior,
+     * we simulate a native click on a temporary anchor rather than using GM_openInTab.
+     */
+    function execute(code, bing, host, originalEvent = null) {
+        const url = code <= 3 ? bing : host;
 
-        if (actionCode === 1 || actionCode === 4) {
-            window.location.href = targetUrl;
-        } else if (actionCode === 2 || actionCode === 5) {
-            GM_openInTab(targetUrl, { active: false, insert: true });
-        } else if (actionCode === 3 || actionCode === 6) {
-            GM_openInTab(targetUrl, { active: true, insert: true });
+        // Handle current tab navigation
+        if (code === 1 || code === 4) {
+            window.location.href = url;
+            return;
         }
+
+        // Handle new tab navigation by simulating a native browser click.
+        // This bypasses userscript manager tab-ordering logic and uses the browser's own rules.
+        const link = document.createElement('a');
+        link.href = url;
+
+        if (code === 3 || code === 6) {
+            // "Active" new tab: standard browser behavior for target="_blank"
+            link.target = '_blank';
+        } else {
+            // "Background" new tab: We use a MouseEvent to mimic a Ctrl+Click (native background tab)
+            const navEvent = new MouseEvent('click', {
+                ctrlKey: true,
+                metaKey: true,
+                bubbles: true,
+                cancelable: true
+            });
+            link.dispatchEvent(navEvent);
+            return;
+        }
+
+        link.click();
     }
 
-    function attachInteractionHandlers(element, source, bingUrl, hostUrl) {
-        const getClickType = (e) => {
-            if (e.button === 1) return 'middle';
-            if (e.button === 0 && (e.ctrlKey || e.metaKey)) return 'ctrl';
-            if (e.button === 0 && !e.shiftKey) return 'left';
-            return null;
-        };
-
-        element.addEventListener('mousedown', (e) => {
-            if (e.button === 2) return;
-
-            const clickType = getClickType(e);
-            if (!clickType) return;
-
-            const actionCode = settings[`${source}_${clickType}`];
-
-            const isPassThrough = (source === 'video' && clickType === 'left' && actionCode === 1 && settings.force_refresh === 0);;
-
-            if (isPassThrough) {
-                element.style.pointerEvents = 'none';
-                setTimeout(() => { element.style.pointerEvents = ''; }, 200);
-            } else if (clickType === 'middle') {
-                e.preventDefault();
-                e.stopPropagation();
-            } else {
-                e.stopPropagation();
-            }
-        });
-
-        const handleExecution = (e) => {
-            if (e.button === 2) return;
-
-            const clickType = getClickType(e);
-            if (!clickType) return;
-
-            const actionCode = settings[`${source}_${clickType}`];
-            const isPassThrough = (source === 'video' && clickType === 'left' && actionCode === 1 && settings.force_refresh === 0);;
-
-            if (isPassThrough) {
-                return; // Bing native loader handles this
-            }
-
-            e.preventDefault();
-            e.stopPropagation();
-            executeAction(actionCode, bingUrl, hostUrl);
-        };
-
-        element.addEventListener('click', handleExecution);
-        element.addEventListener('auxclick', handleExecution);
+    function updateGhostLink(card, bingUrl) {
+        let ghost = card.querySelector('.' + BING_CONFIG.selectors.ghostClass);
+        if (!ghost) {
+            ghost = document.createElement('a');
+            ghost.className = BING_CONFIG.selectors.ghostClass;
+            ghost.style.cssText = 'position:absolute; inset:0; z-index:-1; opacity:0; pointer-events:none;';
+            card.appendChild(ghost);
+        }
+        ghost.href = bingUrl;
+        return ghost;
     }
 
-    // V2.5: Apply routing behavior to the main embedded video's metadata links
-    function patchMainVideoLinks() {
-        const selectors = [
-            '.metadataArea .mmvdp_meta_top a.metaItem:not([data-bvf-patched])', // Video Title
-            '.metadataArea a.source.tosurl:not([data-bvf-patched])',           // Host Website
-            '.metadataArea a.metaItem.vctil:not([data-bvf-patched])'            // Uploader Channel
-        ];
-
-        document.querySelectorAll(selectors.join(', ')).forEach(link => {
-            // Stamp it so we don't attach duplicate listeners on DOM reloads
-            link.dataset.bvfPatched = '1';
-
-            // Remove target so our JS fully controls tab routing
-            link.removeAttribute('target');
-
-            // By passing link.href as both bingUrl and hostUrl, we ensure that if a user
-            // maps a host setting to a "Bing Embed" action (1,2,3), it still gracefully
-            // routes to the external channel/video using the correct tab logic.
-            attachInteractionHandlers(link, 'host', link.href, link.href);
-        });
+    function isCurrentVideoMetadata(el) {
+        if (!el) return false;
+        if (el.closest(BING_CONFIG.selectors.videoTile)) return false;
+        return el.matches(BING_CONFIG.selectors.metadataLinks.join(','));
     }
 
-    function patchCards() {
-        document.querySelectorAll('.videoTile.wilcpt:not([data-bvf-patched])').forEach(card => {
+    function patch() {
+        const tiles = document.querySelectorAll(BING_CONFIG.selectors.videoTile + ':not([' + BING_CONFIG.attributes.processedCard + '])');
+
+        tiles.forEach(card => {
             const data = getCardData(card);
             if (!data) return;
 
-            card.dataset.bvfPatched = '1';
-            const bingUrl = buildBingVideoUrl(data.videoId, data.title);
-            let hostUrl = '';
+            card.setAttribute(BING_CONFIG.attributes.processedCard, '1');
+            const bingUrl = buildBingVideoUrl(data.mid, data.t);
+            const hostLinkElements = card.querySelectorAll(BING_CONFIG.selectors.hostLink);
 
-            const hostLink = card.querySelector('a.source.tosurl');
-            if (hostLink) {
-                hostUrl = hostLink.href;
-                if (getComputedStyle(hostLink).position === 'static') {
-                    hostLink.style.position = 'relative';
+            if (hostLinkElements.length === 0) {
+                reportError('E003');
+            }
+
+            const ghost = updateGhostLink(card, bingUrl);
+
+            hostLinkElements.forEach(el => {
+                if (window.getComputedStyle(el).position === 'static') {
+                    el.style.position = 'relative';
                 }
-                hostLink.style.zIndex = '20';
+                el.style.zIndex = '10000';
+            });
 
-                hostLink.removeAttribute('target');
+            const handleIntercept = (e) => {
+                if (e.target.closest(BING_CONFIG.selectors.controlsToAvoid)) return;
 
-                attachInteractionHandlers(hostLink, 'host', bingUrl, hostUrl);
-            }
+                const isCtrl = e.ctrlKey || e.metaKey;
+                const type = e.button === 1 ? 'middle' : (isCtrl ? 'ctrl' : 'left');
+                const targetHostLink = e.target.closest(BING_CONFIG.selectors.hostLink);
+                const onHostLink = !!targetHostLink;
+                const code = settings[`${onHostLink ? 'host' : 'video'}_${type}`];
+                const currentHostUrl = targetHostLink ? (targetHostLink.href || targetHostLink.getAttribute('href')) : '';
 
-            if (getComputedStyle(card).position === 'static') {
-                card.style.position = 'relative';
-            }
+                if (e.button === 2 || e.type === 'contextmenu') {
+                    if (!onHostLink) {
+                        ghost.style.zIndex = '99999';
+                        ghost.style.pointerEvents = 'auto';
+                        setTimeout(() => {
+                            ghost.style.zIndex = '-1';
+                            ghost.style.pointerEvents = 'none';
+                        }, BING_CONFIG.timing.ghostElementTimeout);
+                    } else if (targetHostLink.tagName !== 'A') {
+                        let hGhost = targetHostLink.querySelector('.bvf-host-ghost');
+                        if (!hGhost) {
+                            hGhost = document.createElement('a');
+                            hGhost.className = 'bvf-host-ghost';
+                            hGhost.style.cssText = 'position:absolute; inset:0; z-index:99999; opacity:0; pointer-events:none;';
+                            targetHostLink.appendChild(hGhost);
+                        }
+                        hGhost.href = currentHostUrl;
+                        hGhost.style.pointerEvents = 'auto';
+                        setTimeout(() => {
+                            hGhost.style.pointerEvents = 'none';
+                        }, BING_CONFIG.timing.ghostElementTimeout);
+                    }
+                    return;
+                }
 
-            const overlay = document.createElement('a');
-            overlay.href = bingUrl;
-            overlay.title = data.title;
-            overlay.style.cssText = 'position:absolute;inset:0;z-index:10;display:block;';
+                if (type === 'middle' || type === 'ctrl') {
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    if (e.type === 'click' || e.type === 'auxclick') {
+                        execute(code, bingUrl, currentHostUrl, e);
+                    }
+                    return;
+                }
 
-            attachInteractionHandlers(overlay, 'video', bingUrl, hostUrl);
+                if (type === 'left') {
+                    // If refresh_on_left_click is enabled, execute the navigation (load new page)
+                    // Otherwise, return and let Bing's default behavior happen (swap embedded video)
+                    if (code === 1 && !onHostLink && !settings.refresh_on_left_click) return;
+                    e.preventDefault();
+                    e.stopImmediatePropagation();
+                    if (e.type === 'click') {
+                        execute(code, bingUrl, currentHostUrl, e);
+                    }
+                }
+            };
 
-            card.appendChild(overlay);
+            card.addEventListener('mousedown', handleIntercept, true);
+            card.addEventListener('click', handleIntercept, true);
+            card.addEventListener('auxclick', handleIntercept, true);
+            card.addEventListener('contextmenu', handleIntercept, true);
         });
     }
 
-    patchCards();
-    patchMainVideoLinks();
+    const handleGlobalMetaClick = (e) => {
+        const targetLink = e.target.closest('a, div[href]');
+        if (!isCurrentVideoMetadata(targetLink)) return;
 
-    let debounceTimer;
-    const observer = new MutationObserver(() => {
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-            patchCards();
-            patchMainVideoLinks();
-        }, 150);
-    });
-    observer.observe(document.body, { childList: true, subtree: true });
+        targetLink.removeAttribute('target');
+        const isCtrl = e.ctrlKey || e.metaKey;
+        const type = e.button === 1 ? 'middle' : (isCtrl ? 'ctrl' : 'left');
+        const code = settings[`host_${type}`];
 
+        if (e.button === 2 || e.type === 'contextmenu') return;
+
+        e.preventDefault();
+        e.stopImmediatePropagation();
+
+        if (e.type === 'click' || e.type === 'auxclick') {
+            const url = targetLink.href || targetLink.getAttribute('href');
+            execute(code, '', url, e);
+        }
+    };
+
+    document.body.addEventListener('mousedown', handleGlobalMetaClick, true);
+    document.body.addEventListener('click', handleGlobalMetaClick, true);
+    document.body.addEventListener('auxclick', handleGlobalMetaClick, true);
+
+    // --- Efficient MutationObserver for video tile changes ---
+    let patchTimeout = null;
+    const debouncedPatch = () => {
+        clearTimeout(patchTimeout);
+        patchTimeout = setTimeout(() => {
+            patch();
+            patchTimeout = null;
+        }, 50); // Debounce to batch rapid mutations
+    };
+
+    // Initial patch on page load
+    patch();
+
+    // Observe related videos container for new tiles
+    const relatedVideosContainer = document.getElementById('mm_relvid');
+    if (relatedVideosContainer) {
+        const observer = new MutationObserver(debouncedPatch);
+        observer.observe(relatedVideosContainer, { childList: true, subtree: true });
+    }
+
+    // Observe embedded video metadata for changes
+    const metadataBar = document.querySelector('.metadataBar');
+    if (metadataBar) {
+        const metaObserver = new MutationObserver(debouncedPatch);
+        metaObserver.observe(metadataBar, {
+            subtree: true,
+            attributes: true,
+            attributeFilter: ['href', BING_CONFIG.attributes.cardMetadata]
+        });
+    }
+
+    // Fallback to polling if observers couldn't attach
+    if (!relatedVideosContainer || !metadataBar) {
+        setInterval(patch, BING_CONFIG.timing.patchInterval);
+    }
 })();
