@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Open Bing Related Videos In New Tab 2
 // @namespace    https://github.com/UndeadKitten/monkey-scripts
-// @version      1.3.42
+// @version      1.4.43
 // @description  Restores and completely customizes Bing functionality when clicking on related videos. Menu config available.
 // @author       UndeadKitten (aka AlwaysNothing)
 // @match        https://www.bing.com/*
@@ -76,7 +76,8 @@
     const defaultSettings = {
         video_left: 1, video_middle: 2, video_ctrl: 2,
         host_left: 4, host_middle: 5, host_ctrl: 5,
-        update_query: 0, force_vidadt: 1, refresh_on_left_click: 0
+        update_query: 0, force_vidadt: 1, refresh_on_left_click: 0,
+        override_embed_meta: 1 // New setting added here (1 = intercept, 0 = default browser behavior)
     };
     let settings = GM_getValue('bvf_settings', defaultSettings);
 
@@ -136,6 +137,7 @@
                 ${createSelectHTML('Layout Mode', 'force_vidadt', vidadtLabels)}
                 ${createCheckboxHTML('Update query to video title', 'update_query')}
                 ${createCheckboxHTML('Refresh page on video left-click', 'refresh_on_left_click')}
+                ${createCheckboxHTML('Apply host click settings to embedded video links', 'override_embed_meta')}
             </div>
             <div style="display:flex; justify-content:space-between; gap:10px;">
                 <button id="bvf-reset" style="padding:8px 16px; cursor:pointer; background:#f0f0f0; border:1px solid #ccc; border-radius:4px;">Reset to Default</button>
@@ -152,7 +154,8 @@
             ['video_left', 'video_middle', 'video_ctrl', 'host_left', 'host_middle', 'host_ctrl', 'force_vidadt'].forEach(k => {
                 document.getElementById(`sel_${k}`).value = defaultSettings[k];
             });
-            ['update_query', 'refresh_on_left_click'].forEach(k => {
+            // Added override_embed_meta to the reset list
+            ['update_query', 'refresh_on_left_click', 'override_embed_meta'].forEach(k => {
                 document.getElementById(`chk_${k}`).checked = defaultSettings[k] === 1;
             });
         });
@@ -161,7 +164,8 @@
         document.getElementById('bvf-save').addEventListener('click', () => {
             const s = {};
             ['video_left', 'video_middle', 'video_ctrl', 'host_left', 'host_middle', 'host_ctrl', 'force_vidadt'].forEach(k => s[k] = parseInt(document.getElementById(`sel_${k}`).value, 10));
-            ['update_query', 'refresh_on_left_click'].forEach(k => s[k] = document.getElementById(`chk_${k}`).checked ? 1 : 0);
+            // Added override_embed_meta to the save list
+            ['update_query', 'refresh_on_left_click', 'override_embed_meta'].forEach(k => s[k] = document.getElementById(`chk_${k}`).checked ? 1 : 0);
             GM_setValue('bvf_settings', s);
             window.location.reload();
         });
@@ -409,6 +413,9 @@
     }
 
     const handleGlobalMetaClick = (e) => {
+        // Exit early if the user has disabled overriding embed metadata
+        if (settings.override_embed_meta === 0) return;
+
         const targetLink = e.target.closest('a, div[href]');
         if (!isCurrentVideoMetadata(targetLink)) return;
 
