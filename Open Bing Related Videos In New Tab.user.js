@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Open Bing Related Videos In New Tab 2
 // @namespace    https://github.com/UndeadKitten/monkey-scripts
-// @version      1.4.43
+// @version      1.4.44
 // @description  Restores and completely customizes Bing functionality when clicking on related videos. Menu config available.
 // @author       UndeadKitten (aka AlwaysNothing)
 // @match        https://www.bing.com/*
@@ -77,7 +77,7 @@
         video_left: 1, video_middle: 2, video_ctrl: 2,
         host_left: 4, host_middle: 5, host_ctrl: 5,
         update_query: 0, force_vidadt: 1, refresh_on_left_click: 0,
-        override_embed_meta: 1 // New setting added here (1 = intercept, 0 = default browser behavior)
+        override_embed_meta: 0
     };
     let settings = GM_getValue('bvf_settings', defaultSettings);
 
